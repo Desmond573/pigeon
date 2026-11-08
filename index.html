@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#f4e7c8">
+<title>Pigeon Post — Parcel Patrol</title>
+<style>
+:root{--paper:#f4e7c8;--ink:#26352d;--red:#d65b45;--green:#5e8062;--gold:#e5ad48}
+*{box-sizing:border-box} html,body{margin:0;min-height:100%;background:#e9d8b4;color:var(--ink);font-family:Georgia,serif}
+body{display:grid;place-items:center;padding:14px;overflow-x:hidden}
+.shell{width:min(100%,960px);background:var(--paper);border:4px solid var(--ink);border-radius:18px;box-shadow:9px 10px 0 #26352d;overflow:hidden}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:3px solid var(--ink);background:#f8edda}
+.brand{font-weight:900;letter-spacing:1px;font-size:clamp(20px,4vw,30px)}.brand small{display:block;font:700 10px/1.3 Arial,sans-serif;letter-spacing:3px;color:var(--red)}
+.stats{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;font:700 12px Arial,sans-serif}
+.stat{border:2px solid var(--ink);border-radius:9px;padding:7px 10px;background:#fff8e9}.stat b{color:var(--red);font-size:16px;margin-left:4px}
+.stage{position:relative;background:#d9e1c5}
+canvas{display:block;width:100%;height:auto;aspect-ratio:900/570;touch-action:none}
+.overlay{position:absolute;inset:0;display:grid;place-items:center;background:#26352d99;padding:18px}
+.panel{width:min(92%,440px);background:#fff4dc;border:3px solid var(--ink);border-radius:16px;padding:24px;text-align:center;box-shadow:7px 7px 0 #26352d}
+.panel h1{font-size:clamp(28px,6vw,43px);line-height:.98;margin:0 0 10px;color:var(--red)}
+.panel p{font:15px/1.5 Arial,sans-serif;margin:10px 0 18px}
+button{border:2px solid var(--ink);background:var(--gold);color:var(--ink);font:900 14px Arial,sans-serif;padding:12px 19px;border-radius:10px;box-shadow:3px 3px 0 var(--ink);cursor:pointer}
+button:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--ink)}
+.secondary{background:#d8e2c7}
+.hudbottom{display:flex;justify-content:space-between;align-items:center;padding:11px 16px;gap:12px;border-top:3px solid var(--ink);font:12px Arial,sans-serif;background:#f8edda}
+#message{font-weight:700;color:#5e8062}.controls{display:none;gap:10px;justify-content:center;padding:10px;background:#e8d9b9}
+.controls button{width:66px;height:52px;font-size:22px;padding:0;touch-action:none}
+@media(max-width:650px){body{padding:7px}.shell{border-width:3px;box-shadow:5px 6px 0 #26352d}header{padding:10px}.stat{padding:5px 7px}.stat b{font-size:14px}.hudbottom{font-size:10px}.controls{display:flex}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header>
+ <div class="brand">PIGEON POST <small>PARCEL PATROL · EST. THIS MORNING</small></div>
+ <div class="stats">
+  <div class="stat">DELIVERED <b id="delivered">0</b></div>
+  <div class="stat">LIVES <b id="lives">3</b></div>
+  <div class="stat">BEST <b id="best">0</b></div>
+ </div>
+</header>
+<div class="stage">
+ <canvas id="game" width="900" height="570" aria-label="Pigeon Post game area"></canvas>
+ <div class="overlay" id="overlay">
+  <div class="panel">
+   <h1 id="panelTitle">PIGEON<br>POST!</h1>
+   <p id="panelText">The town's parcels are piling up. You're a very determined pigeon with a tiny satchel. Pick up letters, dodge cats and bicycles, and deliver everything to the red postboxes.</p>
+   <p><b>HOW TO PLAY</b><br>Move with <b>WASD</b> or arrow keys. On a phone, use the buttons below. Collect ✉ letters, then touch a 📮 postbox to deliver them. Avoid cats, bikes and puddles!</p>
+   <button id="startBtn">START MY SHIFT</button>
+  </div>
+ </div>
+</div>
+<div class="controls">
+ <button data-dir="up" aria-label="Move up">↑</button>
+ <button data-dir="left" aria-label="Move left">←</button>
+ <button data-dir="down" aria-label="Move down">↓</button>
+ <button data-dir="right" aria-label="Move right">→</button>
+</div>
+<div class="hudbottom"><span id="message">A quiet morning in the old town…</span><span>SPACE: PAUSE · R: RESTART</span></div>
+</div>
+<script>
+(()=>{
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id);
+const W=900,H=570;
+let state='menu',player,letters,boxes,hazards,particles,delivered,lives,best,frame,keys={},touchDir=null,invuln=0,shake=0;
+best=Number(localStorage.getItem('pigeonBest')||0);$('best').textContent=best;
+const rand=(a,b)=>a+Math.random()*(b-a),dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const buildings=[
+ [18,18,180,112,'#c6a77d'],[212,18,155,112,'#d6b78b'],[390,18,180,112,'#b9c5a1'],[585,18,140,112,'#d5a28d'],[745,18,137,112,'#c6a77d'],
+ [18,440,180,112,'#d5a28d'],[212,440,155,112,'#b9c5a1'],[390,440,180,112,'#d6b78b'],[585,440,140,112,'#c6a77d'],[745,440,137,112,'#b9c5a1']
+];
+function reset(){
+ delivered=0;lives=3;frame=0;invuln=0;shake=0;
+ player={x:450,y:285,r:17,speed:3.35,dir:1,bag:0};
+ letters=[];boxes=[{x:80,y:280},{x:820,y:280},{x:450,y:390}];
+ hazards=[
+  {x:300,y:205,r:21,type:'cat',vx:1.3,vy:.7,phase:0},
+  {x:610,y:345,r:19,type:'bike',vx:-1.6,vy:-.45,phase:1.2},
+  {x:450,y:175,r:18,type:'puddle',vx:0,vy:0,phase:0}
+ ];
+ particles=[];
+ for(let i=0;i<5;i++)spawnLetter();
+ updateHud();
+}
+function spawnLetter(){
+ let p;do{p={x:rand(70,830),y:rand(155,415),r:12};}while(Math.hypot(p.x-player.x,p.y-player.y)<100);
+ letters.push(p);
+}
+function updateHud(){$('delivered').textContent=delivered;$('lives').textContent='♥ '.repeat(lives).trim()||'0';$('best').textContent=best;}
+function say(t){$('message').textContent=t}
+function start(){reset();state='play';$('overlay').style.display='none';say('Special delivery! The postboxes are waiting.');}
+function end(){
+ state='over';
+ if(delivered>best){best=delivered;localStorage.setItem('pigeonBest',best)}
+ updateHud();$('panelTitle').innerHTML='SHIFT<br>COMPLETE!';$('panelText').innerHTML=`You delivered <b>${delivered}</b> parcel${delivered===1?'':'s'} before the town got too chaotic.<br>${delivered>=12?'The Mayor is considering a statue in your honour.':'The postmaster says you have potential.'}`;
+ $('startBtn').textContent='WORK ANOTHER SHIFT';$('overlay').style.display='grid';
+}
+function pause(){
+ if(state==='play'){state='pause';$('panelTitle').textContent='TEA BREAK';$('panelText').textContent='Even pigeons need a breather. Your parcels will wait.';$('startBtn').textContent='BACK TO WORK';$('overlay').style.display='grid'}
+ else if(state==='pause'){state='play';$('overlay').style.display='none'}
+}
+$('startBtn').onclick=()=>{if(state==='pause')pause();else start()};
+window.addEventListener('keydown',e=>{
+ const k=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();
+ keys[k]=true;if(k===' '&&state==='play')pause();if(k==='r'&&state!=='menu')start();
+});
+window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+document.querySelectorAll('[data-dir]').forEach(b=>{
+ const d=b.dataset.dir;
+ b.addEventListener('pointerdown',e=>{e.preventDefault();touchDir=d;b.setPointerCapture(e.pointerId)});
+ ['pointerup','pointercancel','lostpointercapture'].forEach(ev=>b.addEventListener(ev,()=>{if(touchDir===d)touchDir=null}));
+});
+function moveVector(){
+ let x=0,y=0;
+ if(keys.arrowleft||keys.a||touchDir==='left')x--;
+ if(keys.arrowright||keys.d||touchDir==='right')x++;
+ if(keys.arrowup||keys.w||touchDir==='up')y--;
+ if(keys.arrowdown||keys.s||touchDir==='down')y++;
+ let m=Math.hypot(x,y)||1;return{x:x/m,y:y/m};
+}
+function burst(x,y,color,n=9){
+ for(let i=0;i<n;i++)particles.push({x,y,vx:rand(-2.8,2.8),vy:rand(-2.8,2.8),life:rand(18,35),color});
+}
+function hit(){
+ if(invuln>0)return;
+ lives--;invuln=95;shake=12;burst(player.x,player.y,'#d65b45',18);say('Oof! Watch out for the town troublemakers.');updateHud();
+ if(lives<=0)end();
+}
+function update(){
+ if(state!=='play')return;frame++;
+ const v=moveVector();player.x+=v.x*player.speed;player.y+=v.y*player.speed;
+ if(v.x)player.dir=v.x>0?1:-1;
+ player.x=Math.max(35,Math.min(W-35,player.x));player.y=Math.max(150,Math.min(H-35,player.y));
+ if(invuln>0)invuln--;if(shake>0)shake*=.82;
+ hazards.forEach(h=>{
+  if(h.type!=='puddle'){
+   h.x+=h.vx;h.y+=h.vy;
+   if(h.x<225||h.x>675)h.vx*=-1;
+   if(h.y<155||h.y>415)h.vy*=-1;
+   if(h.type==='cat')h.phase+=.06;
+  }
+  if(dist(player,h)<player.r+h.r-4){if(h.type==='puddle'){player.speed=2.1;setTimeout(()=>player.speed=3.35,650)}else hit()}
+ });
+ letters=letters.filter(l=>{
+  if(dist(player,l)<player.r+l.r){if(player.bag<3){player.bag++;burst(l.x,l.y,'#e5ad48',7);say(`Letter collected! Satchel: ${player.bag}/3`)}else say('Satchel full — deliver your letters!');return false}
+  return true;
+ });
+ boxes.forEach(b=>{
+  if(player.bag>0&&dist(player,b)<34){
+   delivered+=player.bag;burst(b.x,b.y,'#5e8062',20);player.bag=0;
+   say('Lovely work! A batch delivered.');updateHud();
+   for(let i=0;i<3;i++)spawnLetter();
+   // Add a new roaming cat as the town gets busier.
+   if(delivered>0&&delivered%5===0)hazards.push({x:rand(240,660),y:rand(175,400),r:20,type:'cat',vx:rand(1,1.8)*(Math.random()<.5?-1:1),vy:rand(.5,1)*(Math.random()<.5?-1:1),phase:0});
+  }
+ });
+ particles=particles.filter(p=>{p.x+=p.vx;p.y+=p.vy;p.life--;return p.life>0});
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);ctx.save();
+ if(shake>1)ctx.translate(rand(-shake,shake),rand(-shake,shake));
+ // warm cobblestone streets
+ ctx.fillStyle='#d9e1c5';ctx.fillRect(0,0,W,H);
+ ctx.fillStyle='#c9c8a6';ctx.fillRect(0,137,W,290);
+ ctx.strokeStyle='#b5b698';ctx.lineWidth=2;
+ for(let y=150;y<430;y+=28){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+ for(let x=0;x<W;x+=45){ctx.beginPath();ctx.moveTo(x,138);ctx.lineTo(x,427);ctx.stroke()}
+ buildings.forEach(([x,y,w,h,c],i)=>{
+  ctx.fillStyle=c;ctx.fillRect(x,y,w,h);ctx.strokeStyle='#4a5141';ctx.lineWidth=4;ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle='#f5e4bd';for(let wx=x+18;wx<x+w-15;wx+=42)for(let wy=y+22;wy<y+h-10;wy+=42){ctx.fillRect(wx,wy,19,24);ctx.strokeStyle='#806e55';ctx.lineWidth=2;ctx.strokeRect(wx,wy,19,24)}
+  ctx.fillStyle='#8d7056';ctx.fillRect(x+w/2-17,y+h-35,34,35);
+  ctx.fillStyle='#667d62';ctx.fillRect(x+8,y+h-9,w-16,9);
+ });
+ // park trees
+ [[110,185],[785,190],[120,400],[780,400],[350,385],[550,185]].forEach(([x,y])=>{
+  ctx.fillStyle='#806347';ctx.fillRect(x-5,y,10,22);ctx.fillStyle='#668765';ctx.beginPath();ctx.arc(x,y-5,19,0,Math.PI*2);ctx.fill();ctx.fillStyle='#8ca17a';ctx.beginPath();ctx.arc(x-8,y-11,9,0,Math.PI*2);ctx.fill();
+ });
+ // postboxes
+ boxes.forEach(b=>{
+  ctx.fillStyle='#26352d';ctx.fillRect(b.x-14,b.y-20,28,43);ctx.fillStyle='#d65b45';ctx.fillRect(b.x-12,b.y-23,24,40);
+  ctx.fillStyle='#f8edda';ctx.fillRect(b.x-8,b.y-12,16,4);ctx.fillStyle='#26352d';ctx.fillRect(b.x-3,b.y+17,6,9);
+  ctx.font='bold 12px Georgia';ctx.fillStyle='#fff4dc';ctx.textAlign='center';ctx.fillText('POST',b.x,b.y+8);
+ });
+ // letters
+ letters.forEach(l=>{ctx.save();ctx.translate(l.x,l.y);ctx.rotate(Math.sin(frame*.08+l.x)*.12);ctx.fillStyle='#fff4dc';ctx.strokeStyle='#8e6546';ctx.lineWidth=2;ctx.fillRect(-10,-8,20,16);ctx.strokeRect(-10,-8,20,16);ctx.beginPath();ctx.moveTo(-10,-8);ctx.lineTo(0,1);ctx.lineTo(10,-8);ctx.stroke();ctx.restore()});
+ // hazards
+ hazards.forEach(h=>{
+  if(h.type==='puddle'){ctx.fillStyle='#91b5b0';ctx.beginPath();ctx.ellipse(h.x,h.y,31,13,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#668f8b';ctx.lineWidth=3;ctx.stroke();ctx.fillStyle='#d9e8dc';ctx.beginPath();ctx.ellipse(h.x-8,h.y-3,8,3,-.2,0,Math.PI*2);ctx.fill()}
+  else if(h.type==='cat'){
+   ctx.save();ctx.translate(h.x,h.y+Math.sin(h.phase)*3);ctx.fillStyle='#6e5145';ctx.beginPath();ctx.ellipse(0,3,19,13,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.moveTo(-13,-6);ctx.lineTo(-12,-22);ctx.lineTo(-2,-12);ctx.moveTo(5,-12);ctx.lineTo(15,-22);ctx.lineTo(14,-5);ctx.fill();ctx.fillStyle='#f1d38e';ctx.beginPath();ctx.arc(-7,-2,2,0,7);ctx.arc(7,-2,2,0,7);ctx.fill();ctx.restore();
+  }else{
+   ctx.save();ctx.translate(h.x,h.y);ctx.rotate(-.25);ctx.fillStyle='#53636a';ctx.fillRect(-23,-5,46,10);ctx.strokeStyle='#34434a';ctx.lineWidth=4;[-17,17].forEach(x=>{ctx.beginPath();ctx.arc(x,9,9,0,Math.PI*2);ctx.stroke()});ctx.restore();
+  }
+ });
+ // pigeon
+ ctx.save();ctx.translate(player.x,player.y);ctx.scale(player.dir,1);
+ if(invuln>0&&Math.floor(frame/5)%2===0)ctx.globalAlpha=.35;
+ ctx.fillStyle='#536b68';ctx.beginPath();ctx.ellipse(0,0,19,14,-.15,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#748b82';ctx.beginPath();ctx.ellipse(-4,3,11,7,.4,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#e8c36e';ctx.beginPath();ctx.moveTo(15,-3);ctx.lineTo(27,1);ctx.lineTo(15,5);ctx.fill();
+ ctx.fillStyle='#f5edcf';ctx.beginPath();ctx.arc(9,-7,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#26352d';ctx.beginPath();ctx.arc(11,-7,2,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#d65b45';ctx.fillRect(-9,10,13,8);ctx.fillStyle='#f2c56c';ctx.fillRect(-7,12,9,3);
+ ctx.restore();
+ // particles
+ particles.forEach(p=>{ctx.globalAlpha=Math.max(0,p.life/35);ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1});
+ // satchel indicator
+ ctx.fillStyle='#26352d';ctx.font='bold 17px Arial';ctx.textAlign='left';ctx.fillText('✉ '+player.bag+'/3',24,34);
+ if(state==='menu'){ctx.fillStyle='#26352d';ctx.font='bold 22px Georgia';ctx.textAlign='center';ctx.fillText('A LITTLE DELIVERY ADVENTURE',450,540)}
+ ctx.restore();
+}
+function loop(){update();draw();requestAnimationFrame(loop)}
+reset();loop();
+})();
+</script>
+</body>
+</html>
